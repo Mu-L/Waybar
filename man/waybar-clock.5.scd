@@ -51,7 +51,7 @@ $XDG_CONFIG_HOME/waybar/config ++
 |[ *rotate*
 :[ integer
 :[
-:[ Positive value to rotate the text label
+:[ Positive value to rotate the text label (in 90 degree increments)
 |[ *on-click*
 :[ string
 :[
@@ -84,6 +84,22 @@ $XDG_CONFIG_HOME/waybar/config ++
 :[ string
 :[ same as format
 :[ Tooltip on hover
+|[ *menu*
+:[ string
+:[
+:[ Action that popups the menu.
+|[ *menu-file*
+:[ string
+:[
+:[ Location of the menu descriptor file. There need to be an element of type GtkMenu with id *menu*
+|[ *menu-actions*
+:[ array
+:[
+:[ The actions corresponding to the buttons of the menu.
+|[ *expand*:
+:[ bool
+:[ false
+:[ Enables this module to consume all left over space dynamically.
 
 View all valid format options in *strftime(3)* or have a look https://en.cppreference.com/w/cpp/chrono/duration/formatter
 
@@ -157,6 +173,7 @@ View all valid format options in *strftime(3)* or have a look https://en.cpprefe
 
 - *{calendar}*: Current month calendar
 - *{tz_list}*: List of time in the rest timezones, if more than one timezone is set in the config
+- *{ordinal_date}*: The current day in (English) ordinal form, e.g. 21st
 
 # EXAMPLES
 

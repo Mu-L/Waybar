@@ -22,6 +22,7 @@ class AudioBackend {
   static void sourceInfoCb(pa_context*, const pa_source_info* i, int, void* data);
   static void serverInfoCb(pa_context*, const pa_server_info*, void*);
   static void volumeModifyCb(pa_context*, int, void*);
+  void connectContext();
 
   pa_threaded_mainloop* mainloop_;
   pa_mainloop_api* mainloop_api_;
@@ -37,6 +38,8 @@ class AudioBackend {
   std::string desc_;
   std::string monitor_;
   std::string current_sink_name_;
+  std::string default_sink_name;
+  bool default_sink_running_;
   bool current_sink_running_;
   // SOURCE
   uint32_t source_idx_{0};

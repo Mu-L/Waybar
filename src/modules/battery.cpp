@@ -1,12 +1,14 @@
 #include "modules/battery.hpp"
+
+#include <algorithm>
 #if defined(__FreeBSD__)
 #include <sys/sysctl.h>
 #endif
 #include <spdlog/spdlog.h>
 
 #include <iostream>
-waybar::modules::Battery::Battery(const std::string& id, const Json::Value& config)
-    : ALabel(config, "battery", id, "{capacity}%", 60) {
+waybar::modules::Battery::Battery(const std::string& id, const Bar& bar, const Json::Value& config)
+    : ALabel(config, "battery", id, "{capacity}%", 60), bar_(bar) {
 #if defined(__linux__)
   battery_watch_fd_ = inotify_init1(IN_CLOEXEC);
   if (battery_watch_fd_ == -1) {
@@ -179,7 +181,8 @@ static bool status_gt(const std::string& a, const std::string& b) {
   return false;
 }
 
-const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::getInfos() {
+std::tuple<uint8_t, float, std::string, float, uint16_t, float>
+waybar::modules::Battery::getInfos() {
   std::lock_guard<std::mutex> guard(battery_list_mutex_);
 
   try {
@@ -232,7 +235,7 @@ const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::g
     }
 
     // spdlog::info("{} {} {} {}", capacity,time,status,rate);
-    return {capacity, time / 60.0, status, rate};
+    return {capacity, time / 60.0, status, rate, 0, 0.0F};
 
 #elif defined(__linux__)
     uint32_t total_power = 0;  // μW
@@ -250,6 +253,10 @@ const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::g
     uint32_t time_to_full_now = 0;
     bool time_to_full_now_exists = false;
 
+    uint32_t largestDesignCapacity = 0;
+    uint16_t mainBatCycleCount = 0;
+    float mainBatHealthPercent = 0.0F;
+
     std::string status = "Unknown";
     for (auto const& item : batteries_) {
       auto bat = item.first;
@@ -264,13 +271,6 @@ const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::g
 
       // Some battery will report current and charge in μA/μAh.
       // Scale these by the voltage to get μW/μWh.
-
-      uint32_t capacity = 0;
-      bool capacity_exists = false;
-      if (fs::exists(bat / "capacity")) {
-        capacity_exists = true;
-        std::ifstream(bat / "capacity") >> capacity;
-      }
 
       uint32_t current_now = 0;
       bool current_now_exists = false;
@@ -351,6 +351,43 @@ const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::g
         std::ifstream(bat / "energy_full_design") >> energy_full_design;
       }
 
+      uint16_t cycleCount = 0;
+      if (fs::exists(bat / "cycle_count")) {
+        std::ifstream(bat / "cycle_count") >> cycleCount;
+      }
+      if (charge_full_design >= largestDesignCapacity) {
+        largestDesignCapacity = charge_full_design;
+
+        if (cycleCount > mainBatCycleCount) {
+          mainBatCycleCount = cycleCount;
+        }
+
+        if (charge_full_exists && charge_full_design_exists) {
+          float batHealthPercent = ((float)charge_full / charge_full_design) * 100;
+          if (mainBatHealthPercent == 0.0F || batHealthPercent < mainBatHealthPercent) {
+            mainBatHealthPercent = batHealthPercent;
+          }
+        } else if (energy_full_exists && energy_full_design_exists) {
+          float batHealthPercent = ((float)energy_full / energy_full_design) * 100;
+          if (mainBatHealthPercent == 0.0F || batHealthPercent < mainBatHealthPercent) {
+            mainBatHealthPercent = batHealthPercent;
+          }
+        }
+      }
+
+      uint32_t capacity = 0;
+      bool capacity_exists = false;
+      if (charge_now_exists && charge_full_exists && charge_full != 0) {
+        capacity_exists = true;
+        capacity = 100 * (uint64_t)charge_now / (uint64_t)charge_full;
+      } else if (energy_now_exists && energy_full_exists && energy_full != 0) {
+        capacity_exists = true;
+        capacity = 100 * (uint64_t)energy_now / (uint64_t)energy_full;
+      } else if (fs::exists(bat / "capacity")) {
+        capacity_exists = true;
+        std::ifstream(bat / "capacity") >> capacity;
+      }
+
       if (!voltage_now_exists) {
         if (power_now_exists && current_now_exists && current_now != 0) {
           voltage_now_exists = true;
@@ -391,13 +428,7 @@ const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::g
       }
 
       if (!capacity_exists) {
-        if (charge_now_exists && charge_full_exists && charge_full != 0) {
-          capacity_exists = true;
-          capacity = 100 * (uint64_t)charge_now / (uint64_t)charge_full;
-        } else if (energy_now_exists && energy_full_exists && energy_full != 0) {
-          capacity_exists = true;
-          capacity = 100 * (uint64_t)energy_now / (uint64_t)energy_full;
-        } else if (charge_now_exists && energy_full_exists && voltage_now_exists) {
+        if (charge_now_exists && energy_full_exists && voltage_now_exists) {
           if (!charge_full_exists && voltage_now != 0) {
             charge_full_exists = true;
             charge_full = 1000000 * (uint64_t)energy_full / (uint64_t)voltage_now;
@@ -571,11 +602,12 @@ const std::tuple<uint8_t, float, std::string, float> waybar::modules::Battery::g
     // still charging but not yet done
     if (cap == 100 && status == "Charging") status = "Full";
 
-    return {cap, time_remaining, status, total_power / 1e6};
+    return {
+        cap, time_remaining, status, total_power / 1e6, mainBatCycleCount, mainBatHealthPercent};
 #endif
   } catch (const std::exception& e) {
     spdlog::error("Battery: {}", e.what());
-    return {0, 0, "Unknown", 0};
+    return {0, 0, "Unknown", 0, 0, 0.0f};
   }
 }
 
@@ -631,7 +663,7 @@ auto waybar::modules::Battery::update() -> void {
     return;
   }
 #endif
-  auto [capacity, time_remaining, status, power] = getInfos();
+  auto [capacity, time_remaining, status, power, cycles, health] = getInfos();
   if (status == "Unknown") {
     status = getAdapterStatus(capacity);
   }
@@ -641,6 +673,7 @@ auto waybar::modules::Battery::update() -> void {
                  [](char ch) { return ch == ' ' ? '-' : std::tolower(ch); });
   auto format = format_;
   auto state = getState(capacity, true);
+  setBarClass(state);
   auto time_remaining_formatted = formatTimeRemaining(time_remaining);
   if (tooltipEnabled()) {
     std::string tooltip_text_default;
@@ -660,10 +693,11 @@ auto waybar::modules::Battery::update() -> void {
     } else if (config_["tooltip-format"].isString()) {
       tooltip_format = config_["tooltip-format"].asString();
     }
-    label_.set_tooltip_text(fmt::format(fmt::runtime(tooltip_format),
-                                        fmt::arg("timeTo", tooltip_text_default),
-                                        fmt::arg("power", power), fmt::arg("capacity", capacity),
-                                        fmt::arg("time", time_remaining_formatted)));
+    label_.set_tooltip_text(
+        fmt::format(fmt::runtime(tooltip_format), fmt::arg("timeTo", tooltip_text_default),
+                    fmt::arg("power", power), fmt::arg("capacity", capacity),
+                    fmt::arg("time", time_remaining_formatted), fmt::arg("cycles", cycles),
+                    fmt::arg("health", fmt::format("{:.3}", health))));
   }
   if (!old_status_.empty()) {
     label_.get_style_context()->remove_class(old_status_);
@@ -684,8 +718,44 @@ auto waybar::modules::Battery::update() -> void {
     auto icons = std::vector<std::string>{status + "-" + state, status, state};
     label_.set_markup(fmt::format(
         fmt::runtime(format), fmt::arg("capacity", capacity), fmt::arg("power", power),
-        fmt::arg("icon", getIcon(capacity, icons)), fmt::arg("time", time_remaining_formatted)));
+        fmt::arg("icon", getIcon(capacity, icons)), fmt::arg("time", time_remaining_formatted),
+        fmt::arg("cycles", cycles), fmt::arg("health", fmt::format("{:.3}", health))));
   }
   // Call parent update
   ALabel::update();
+}
+
+void waybar::modules::Battery::setBarClass(std::string& state) {
+  auto classes = bar_.window.get_style_context()->list_classes();
+  const std::string prefix = "battery-";
+
+  auto old_class_it = std::find_if(classes.begin(), classes.end(), [&prefix](auto classname) {
+    return classname.rfind(prefix, 0) == 0;
+  });
+
+  auto new_class = prefix + state;
+
+  // If the bar doesn't have any `battery-` class
+  if (old_class_it == classes.end()) {
+    if (!state.empty()) {
+      bar_.window.get_style_context()->add_class(new_class);
+    }
+    return;
+  }
+
+  auto old_class = *old_class_it;
+
+  // If the bar has a `battery-` class,
+  // but `state` is empty
+  if (state.empty()) {
+    bar_.window.get_style_context()->remove_class(old_class);
+    return;
+  }
+
+  // If the bar has a `battery-` class,
+  // and `state` is NOT empty
+  if (old_class != new_class) {
+    bar_.window.get_style_context()->remove_class(old_class);
+    bar_.window.get_style_context()->add_class(new_class);
+  }
 }

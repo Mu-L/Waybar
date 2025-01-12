@@ -49,8 +49,8 @@ auto getBoolProperty(GDBusProxy* proxy, const char* property_name) -> bool {
   return false;
 }
 
-auto getOptionalStringProperty(GDBusProxy* proxy, const char* property_name)
-    -> std::optional<std::string> {
+auto getOptionalStringProperty(GDBusProxy* proxy,
+                               const char* property_name) -> std::optional<std::string> {
   auto gvar = g_dbus_proxy_get_cached_property(proxy, property_name);
   if (gvar) {
     std::string property_value = g_variant_get_string(gvar, NULL);
@@ -98,30 +98,30 @@ waybar::modules::Bluetooth::Bluetooth(const std::string& id, const Json::Value& 
                    std::back_inserter(device_preference_), [](auto x) { return x.asString(); });
   }
 
-  // NOTE: assumption made that the controller that is selected stays unchanged
-  // for duration of the module
   if (cur_controller_ = findCurController(); !cur_controller_) {
     if (config_["controller-alias"].isString()) {
-      spdlog::error("findCurController() failed: no bluetooth controller found with alias '{}'",
-                    config_["controller-alias"].asString());
+      spdlog::warn("no bluetooth controller found with alias '{}'",
+                   config_["controller-alias"].asString());
     } else {
-      spdlog::error("findCurController() failed: no bluetooth controller found");
+      spdlog::warn("no bluetooth controller found");
     }
     update();
   } else {
-    // These calls only make sense if a controller could be found
+    // This call only make sense if a controller could be found
     findConnectedDevices(cur_controller_->path, connected_devices_);
-    g_signal_connect(manager_.get(), "interface-proxy-properties-changed",
-                     G_CALLBACK(onInterfaceProxyPropertiesChanged), this);
-    g_signal_connect(manager_.get(), "interface-added", G_CALLBACK(onInterfaceAddedOrRemoved),
-                     this);
-    g_signal_connect(manager_.get(), "interface-removed", G_CALLBACK(onInterfaceAddedOrRemoved),
-                     this);
+  }
+
+  g_signal_connect(manager_.get(), "object-added", G_CALLBACK(onObjectAdded), this);
+  g_signal_connect(manager_.get(), "object-removed", G_CALLBACK(onObjectRemoved), this);
+  g_signal_connect(manager_.get(), "interface-proxy-properties-changed",
+                   G_CALLBACK(onInterfaceProxyPropertiesChanged), this);
+  g_signal_connect(manager_.get(), "interface-added", G_CALLBACK(onInterfaceAddedOrRemoved), this);
+  g_signal_connect(manager_.get(), "interface-removed", G_CALLBACK(onInterfaceAddedOrRemoved),
+                   this);
 
 #ifdef WANT_RFKILL
-    rfkill_.on_update.connect(sigc::hide(sigc::mem_fun(*this, &Bluetooth::update)));
+  rfkill_.on_update.connect(sigc::hide(sigc::mem_fun(*this, &Bluetooth::update)));
 #endif
-  }
 
   dp.emit();
 }
@@ -282,6 +282,46 @@ auto waybar::modules::Bluetooth::update() -> void {
   ALabel::update();
 }
 
+auto waybar::modules::Bluetooth::onObjectAdded(GDBusObjectManager* manager, GDBusObject* object,
+                                               gpointer user_data) -> void {
+  ControllerInfo info;
+  Bluetooth* bt = static_cast<Bluetooth*>(user_data);
+
+  if (!bt->cur_controller_.has_value() && bt->getControllerProperties(object, info) &&
+      (!bt->config_["controller-alias"].isString() ||
+       bt->config_["controller-alias"].asString() == info.alias)) {
+    bt->cur_controller_ = std::move(info);
+    bt->dp.emit();
+  }
+}
+
+auto waybar::modules::Bluetooth::onObjectRemoved(GDBusObjectManager* manager, GDBusObject* object,
+                                                 gpointer user_data) -> void {
+  Bluetooth* bt = static_cast<Bluetooth*>(user_data);
+  GDBusProxy* proxy_controller;
+
+  if (!bt->cur_controller_.has_value()) {
+    return;
+  }
+
+  proxy_controller = G_DBUS_PROXY(g_dbus_object_get_interface(object, "org.bluez.Adapter1"));
+
+  if (proxy_controller != NULL) {
+    std::string object_path = g_dbus_object_get_object_path(object);
+
+    if (object_path == bt->cur_controller_->path) {
+      bt->cur_controller_ = bt->findCurController();
+      if (bt->cur_controller_.has_value()) {
+        bt->connected_devices_.clear();
+        bt->findConnectedDevices(bt->cur_controller_->path, bt->connected_devices_);
+      }
+      bt->dp.emit();
+    }
+
+    g_object_unref(proxy_controller);
+  }
+}
+
 // NOTE: only for when the org.bluez.Battery1 interface is added/removed after/before a device is
 // connected/disconnected
 auto waybar::modules::Bluetooth::onInterfaceAddedOrRemoved(GDBusObjectManager* manager,
@@ -292,23 +332,30 @@ auto waybar::modules::Bluetooth::onInterfaceAddedOrRemoved(GDBusObjectManager* m
   std::string object_path = g_dbus_proxy_get_object_path(G_DBUS_PROXY(interface));
   if (interface_name == "org.bluez.Battery1") {
     Bluetooth* bt = static_cast<Bluetooth*>(user_data);
-    auto device = std::find_if(bt->connected_devices_.begin(), bt->connected_devices_.end(),
-                               [object_path](auto d) { return d.path == object_path; });
-    if (device != bt->connected_devices_.end()) {
-      device->battery_percentage = bt->getDeviceBatteryPercentage(object);
-      bt->dp.emit();
+    if (bt->cur_controller_.has_value()) {
+      auto device = std::find_if(bt->connected_devices_.begin(), bt->connected_devices_.end(),
+                                 [object_path](auto d) { return d.path == object_path; });
+      if (device != bt->connected_devices_.end()) {
+        device->battery_percentage = bt->getDeviceBatteryPercentage(object);
+        bt->dp.emit();
+      }
     }
   }
 }
 
 auto waybar::modules::Bluetooth::onInterfaceProxyPropertiesChanged(
     GDBusObjectManagerClient* manager, GDBusObjectProxy* object_proxy, GDBusProxy* interface_proxy,
-    GVariant* changed_properties, const gchar* const* invalidated_properties, gpointer user_data)
-    -> void {
+    GVariant* changed_properties, const gchar* const* invalidated_properties,
+    gpointer user_data) -> void {
   std::string interface_name = g_dbus_proxy_get_interface_name(interface_proxy);
   std::string object_path = g_dbus_object_get_object_path(G_DBUS_OBJECT(object_proxy));
 
   Bluetooth* bt = static_cast<Bluetooth*>(user_data);
+
+  if (!bt->cur_controller_.has_value()) {
+    return;
+  }
+
   if (interface_name == "org.bluez.Adapter1") {
     if (object_path == bt->cur_controller_->path) {
       bt->getControllerProperties(G_DBUS_OBJECT(object_proxy), *bt->cur_controller_);
@@ -348,8 +395,8 @@ auto waybar::modules::Bluetooth::getDeviceBatteryPercentage(GDBusObject* object)
   return std::nullopt;
 }
 
-auto waybar::modules::Bluetooth::getDeviceProperties(GDBusObject* object, DeviceInfo& device_info)
-    -> bool {
+auto waybar::modules::Bluetooth::getDeviceProperties(GDBusObject* object,
+                                                     DeviceInfo& device_info) -> bool {
   GDBusProxy* proxy_device = G_DBUS_PROXY(g_dbus_object_get_interface(object, "org.bluez.Device1"));
 
   if (proxy_device != NULL) {
@@ -415,9 +462,8 @@ auto waybar::modules::Bluetooth::findCurController() -> std::optional<Controller
   return controller_info;
 }
 
-auto waybar::modules::Bluetooth::findConnectedDevices(const std::string& cur_controller_path,
-                                                      std::vector<DeviceInfo>& connected_devices)
-    -> void {
+auto waybar::modules::Bluetooth::findConnectedDevices(
+    const std::string& cur_controller_path, std::vector<DeviceInfo>& connected_devices) -> void {
   GList* objects = g_dbus_object_manager_get_objects(manager_.get());
   for (GList* l = objects; l != NULL; l = l->next) {
     GDBusObject* object = G_DBUS_OBJECT(l->data);

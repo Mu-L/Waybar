@@ -30,10 +30,6 @@ template <typename T>
 inline auto format(const std::locale& loc, const char* spec, const T& arg) {
   return date::format(loc, std::regex_replace(spec, std::regex("\\{:L|\\}"), ""), arg);
 }
-
-constexpr decltype(auto) operator""d(unsigned long long d) noexcept {
-  return date::operator""_d(d);  // very verbose, but it works
-}
 #endif
 }  // namespace date
 
@@ -68,7 +64,7 @@ struct fmt::formatter<date::zoned_time<Duration, TimeZonePtr>> {
   }
 
   template <typename FormatContext>
-  auto format(const date::zoned_time<Duration, TimeZonePtr>& ztime, FormatContext& ctx) {
+  auto format(const date::zoned_time<Duration, TimeZonePtr>& ztime, FormatContext& ctx) const {
     if (ctx.locale()) {
       const auto loc = ctx.locale().template get<std::locale>();
       return fmt::format_to(ctx.out(), "{}", date::format(loc, fmt::to_string(specs), ztime));

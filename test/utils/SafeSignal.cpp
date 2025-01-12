@@ -10,7 +10,7 @@
 #include <thread>
 #include <type_traits>
 
-#include "GlibTestsFixture.hpp"
+#include "fixtures/GlibTestsFixture.hpp"
 
 using namespace waybar;
 
@@ -71,7 +71,7 @@ struct TestObject {
   unsigned copied = 0;
   unsigned moved = 0;
 
-  TestObject(const T& v) : value(v){};
+  TestObject(const T& v) : value(v) {};
   ~TestObject() = default;
 
   TestObject(const TestObject& other)

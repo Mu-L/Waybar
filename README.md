@@ -7,12 +7,14 @@
 #### Current features
 - Sway (Workspaces, Binding mode, Focused window name)
 - River (Mapping mode, Tags, Focused window name)
-- Hyprland (Focused window name)
-- DWL (Tags) [requires dwl ipc patch](https://github.com/djpohly/dwl/wiki/ipc)
+- Hyprland (Window Icons, Workspaces, Focused window name)
+- Niri (Workspaces, Focused window name, Language)
+- DWL (Tags, Focused window name) [requires dwl ipc patch](https://github.com/djpohly/dwl/wiki/ipc)
 - Tray [#21](https://github.com/Alexays/Waybar/issues/21)
 - Local time
 - Battery
 - UPower
+- Power profiles daemon
 - Network
 - Bluetooth
 - Pulseaudio
@@ -36,7 +38,7 @@
 
 Waybar is available from a number of Linux distributions:
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/waybar.svg)](https://repology.org/project/waybar/versions)
+[![Packaging status](https://repology.org/badge/vertical-allrepos/waybar.svg?columns=3&header=Waybar%20Downstream%20Packaging)](https://repology.org/project/waybar/versions)
 
 An Ubuntu PPA with more recent versions is available
 [here](https://launchpad.net/~nschloe/+archive/ubuntu/waybar).
@@ -47,7 +49,7 @@ An Ubuntu PPA with more recent versions is available
 ```bash
 $ git clone https://github.com/Alexays/Waybar
 $ cd Waybar
-$ meson build
+$ meson setup build
 $ ninja -C build
 $ ./build/waybar
 # If you want to install it

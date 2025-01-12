@@ -1,30 +1,26 @@
 #include "client.hpp"
 
+#include <gtk-layer-shell.h>
 #include <spdlog/spdlog.h>
 
 #include <iostream>
+#include <utility>
 
 #include "gtkmm/icontheme.h"
 #include "idle-inhibit-unstable-v1-client-protocol.h"
 #include "util/clara.hpp"
 #include "util/format.hpp"
-#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 
 waybar::Client *waybar::Client::inst() {
-  static auto c = new Client();
+  static auto *c = new Client();
   return c;
 }
 
 void waybar::Client::handleGlobal(void *data, struct wl_registry *registry, uint32_t name,
                                   const char *interface, uint32_t version) {
-  auto client = static_cast<Client *>(data);
-  if (strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
-    // limit version to a highest supported by the client protocol file
-    version = std::min<uint32_t>(version, zwlr_layer_shell_v1_interface.version);
-    client->layer_shell = static_cast<struct zwlr_layer_shell_v1 *>(
-        wl_registry_bind(registry, name, &zwlr_layer_shell_v1_interface, version));
-  } else if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0 &&
-             version >= ZXDG_OUTPUT_V1_NAME_SINCE_VERSION) {
+  auto *client = static_cast<Client *>(data);
+  if (strcmp(interface, zxdg_output_manager_v1_interface.name) == 0 &&
+      version >= ZXDG_OUTPUT_V1_NAME_SINCE_VERSION) {
     client->xdg_output_manager = static_cast<struct zxdg_output_manager_v1 *>(wl_registry_bind(
         registry, name, &zxdg_output_manager_v1_interface, ZXDG_OUTPUT_V1_NAME_SINCE_VERSION));
   } else if (strcmp(interface, zwp_idle_inhibit_manager_v1_interface.name) == 0) {
@@ -47,7 +43,7 @@ void waybar::Client::handleOutput(struct waybar_output &output) {
       .description = &handleOutputDescription,
   };
   // owned by output->monitor; no need to destroy
-  auto wl_output = gdk_wayland_monitor_get_wl_output(output.monitor->gobj());
+  auto *wl_output = gdk_wayland_monitor_get_wl_output(output.monitor->gobj());
   output.xdg_output.reset(zxdg_output_manager_v1_get_xdg_output(xdg_output_manager, wl_output));
   zxdg_output_v1_add_listener(output.xdg_output.get(), &xdgOutputListener, &output);
 }
@@ -66,7 +62,7 @@ std::vector<Json::Value> waybar::Client::getOutputConfigs(struct waybar_output &
 }
 
 void waybar::Client::handleOutputDone(void *data, struct zxdg_output_v1 * /*xdg_output*/) {
-  auto client = waybar::Client::inst();
+  auto *client = waybar::Client::inst();
   try {
     auto &output = client->getOutput(data);
     /**
@@ -90,24 +86,24 @@ void waybar::Client::handleOutputDone(void *data, struct zxdg_output_v1 * /*xdg_
       }
     }
   } catch (const std::exception &e) {
-    std::cerr << e.what() << std::endl;
+    std::cerr << e.what() << '\n';
   }
 }
 
 void waybar::Client::handleOutputName(void *data, struct zxdg_output_v1 * /*xdg_output*/,
                                       const char *name) {
-  auto client = waybar::Client::inst();
+  auto *client = waybar::Client::inst();
   try {
     auto &output = client->getOutput(data);
     output.name = name;
   } catch (const std::exception &e) {
-    std::cerr << e.what() << std::endl;
+    std::cerr << e.what() << '\n';
   }
 }
 
 void waybar::Client::handleOutputDescription(void *data, struct zxdg_output_v1 * /*xdg_output*/,
                                              const char *description) {
-  auto client = waybar::Client::inst();
+  auto *client = waybar::Client::inst();
   try {
     auto &output = client->getOutput(data);
     const char *open_paren = strrchr(description, '(');
@@ -116,18 +112,19 @@ void waybar::Client::handleOutputDescription(void *data, struct zxdg_output_v1 *
     size_t identifier_length = open_paren - description;
     output.identifier = std::string(description, identifier_length - 1);
   } catch (const std::exception &e) {
-    std::cerr << e.what() << std::endl;
+    std::cerr << e.what() << '\n';
   }
 }
 
 void waybar::Client::handleMonitorAdded(Glib::RefPtr<Gdk::Monitor> monitor) {
   auto &output = outputs_.emplace_back();
-  output.monitor = monitor;
+  output.monitor = std::move(monitor);
   handleOutput(output);
 }
 
 void waybar::Client::handleMonitorRemoved(Glib::RefPtr<Gdk::Monitor> monitor) {
-  spdlog::debug("Output removed: {} {}", monitor->get_manufacturer(), monitor->get_model());
+  spdlog::debug("Output removed: {} {}", monitor->get_manufacturer().c_str(),
+                monitor->get_model().c_str());
   /* This event can be triggered from wl_display_roundtrip called by GTK or our code.
    * Defer destruction of bars for the output to the next iteration of the event loop to avoid
    * deleting objects referenced by currently executed code.
@@ -159,15 +156,15 @@ const std::string waybar::Client::getStyle(const std::string &style,
     std::vector<std::string> search_files;
     switch (appearance.value_or(portal->getAppearance())) {
       case waybar::Appearance::LIGHT:
-        search_files.push_back("style-light.css");
+        search_files.emplace_back("style-light.css");
         break;
       case waybar::Appearance::DARK:
-        search_files.push_back("style-dark.css");
+        search_files.emplace_back("style-dark.css");
         break;
       case waybar::Appearance::UNKNOWN:
         break;
     }
-    search_files.push_back("style.css");
+    search_files.emplace_back("style.css");
     css_file = Config::findConfigPath(search_files);
   } else {
     css_file = style;
@@ -200,7 +197,12 @@ void waybar::Client::bindInterfaces() {
   };
   wl_registry_add_listener(registry, &registry_listener, this);
   wl_display_roundtrip(wl_display);
-  if (layer_shell == nullptr || xdg_output_manager == nullptr) {
+
+  if (gtk_layer_is_supported() == 0) {
+    throw std::runtime_error("The Wayland compositor does not support wlr-layer-shell protocol");
+  }
+
+  if (xdg_output_manager == nullptr) {
     throw std::runtime_error("Failed to acquire required resources.");
   }
   // add existing outputs and subscribe to updates
@@ -233,11 +235,11 @@ int waybar::Client::main(int argc, char *argv[]) {
     return 1;
   }
   if (show_help) {
-    std::cout << cli << std::endl;
+    std::cout << cli << '\n';
     return 0;
   }
   if (show_version) {
-    std::cout << "Waybar v" << VERSION << std::endl;
+    std::cout << "Waybar v" << VERSION << '\n';
     return 0;
   }
   if (!log_level.empty()) {
@@ -262,15 +264,30 @@ int waybar::Client::main(int argc, char *argv[]) {
   if (!portal) {
     portal = std::make_unique<waybar::Portal>();
   }
-  auto css_file = getStyle(style_opt);
-  setupCss(css_file);
+  m_cssFile = getStyle(style_opt);
+  setupCss(m_cssFile);
+  m_cssReloadHelper = std::make_unique<CssReloadHelper>(m_cssFile, [&]() { setupCss(m_cssFile); });
   portal->signal_appearance_changed().connect([&](waybar::Appearance appearance) {
     auto css_file = getStyle(style_opt, appearance);
     setupCss(css_file);
   });
+
+  auto m_config = config.getConfig();
+  if (m_config.isObject() && m_config["reload_style_on_change"].asBool()) {
+    m_cssReloadHelper->monitorChanges();
+  } else if (m_config.isArray()) {
+    for (const auto &conf : m_config) {
+      if (conf["reload_style_on_change"].asBool()) {
+        m_cssReloadHelper->monitorChanges();
+        break;
+      }
+    }
+  }
+
   bindInterfaces();
   gtk_app->hold();
   gtk_app->run();
+  m_cssReloadHelper.reset();  // stop watching css file
   bars.clear();
   return 0;
 }

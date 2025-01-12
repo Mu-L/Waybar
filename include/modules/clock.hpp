@@ -8,6 +8,7 @@ namespace waybar::modules {
 
 const std::string kCldPlaceholder{"calendar"};
 const std::string kTZPlaceholder{"tz_list"};
+const std::string kOrdPlaceholder{"ordinal_date"};
 
 enum class CldMode { MONTH, YEAR };
 enum class WS { LEFT, RIGHT, HIDDEN };
@@ -20,10 +21,12 @@ class Clock final : public ALabel {
   auto doAction(const std::string&) -> void override;
 
  private:
-  const std::locale locale_;
+  const std::locale m_locale_;
   // tooltip
-  const std::string tlpFmt_;
-  std::string tlpText_{""};  // tooltip text to print
+  const std::string m_tlpFmt_;
+  std::string m_tlpText_{""};                 // tooltip text to print
+  const Glib::RefPtr<Gtk::Label> m_tooltip_;  // tooltip as a separate Gtk::Label
+  bool query_tlp_cb(int, int, bool, const Glib::RefPtr<Gtk::Tooltip>& tooltip);
   // Calendar
   const bool cldInTooltip_;  // calendar in tooltip
   /*
@@ -40,6 +43,7 @@ class Clock final : public ALabel {
   const int cldMonColLen_{20};   // calendar month column length
   WS cldWPos_{WS::HIDDEN};       // calendar week side to print
   months cldCurrShift_{0};       // calendar months shift
+  int cldShift_{1};              // calendar months shift factor
   year_month_day cldYearShift_;  // calendar Year mode. Cached ymd
   std::string cldYearCached_;    // calendar Year mode. Cached calendar
   year_month cldMonShift_;       // calendar Month mode. Cached ym
@@ -47,8 +51,11 @@ class Clock final : public ALabel {
   day cldBaseDay_{0};            // calendar Cached day. Is used when today is changing(midnight)
   std::string cldText_{""};      // calendar text to print
   CldMode cldMode_{CldMode::MONTH};
-  auto get_calendar(const year_month_day& today, const year_month_day& ymd, const time_zone* tz)
-      -> const std::string;
+  auto get_calendar(const year_month_day& today, const year_month_day& ymd,
+                    const time_zone* tz) -> const std::string;
+
+  // get local time zone
+  auto local_zone() -> const time_zone*;
 
   // time zoned time in tooltip
   const bool tzInTooltip_;                // if need to print time zones text
@@ -57,12 +64,18 @@ class Clock final : public ALabel {
   std::string tzText_{""};                // time zones text to print
   util::SleeperThread thread_;
 
+  // ordinal date in tooltip
+  const bool ordInTooltip_;
+  std::string ordText_{""};
+  auto get_ordinal_date(const year_month_day& today) -> std::string;
+
   auto getTZtext(sys_seconds now) -> std::string;
   auto first_day_of_week() -> weekday;
   // Module actions
   void cldModeSwitch();
   void cldShift_up();
   void cldShift_down();
+  void cldShift_reset();
   void tz_up();
   void tz_down();
   // Module Action Map
@@ -70,6 +83,7 @@ class Clock final : public ALabel {
       {"mode", &waybar::modules::Clock::cldModeSwitch},
       {"shift_up", &waybar::modules::Clock::cldShift_up},
       {"shift_down", &waybar::modules::Clock::cldShift_down},
+      {"shift_reset", &waybar::modules::Clock::cldShift_reset},
       {"tz_up", &waybar::modules::Clock::tz_up},
       {"tz_down", &waybar::modules::Clock::tz_down}};
 };
