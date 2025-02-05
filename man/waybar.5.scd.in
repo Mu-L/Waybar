@@ -16,10 +16,27 @@ Valid locations for this file are:
 - */etc/xdg/waybar/*
 - *@sysconfdir@/xdg/waybar/*
 
-A good starting point is the default configuration found at https://github.com/Alexays/Waybar/blob/master/resources/config
+A good starting point is the default configuration found at https://github.com/Alexays/Waybar/blob/master/resources/config.jsonc
 Also, a minimal example configuration can be found at the bottom of this man page.
 
+The visual display elements for waybar use a CSS stylesheet, see *waybar-styles(5)* for details.
+
 # BAR CONFIGURATION
+
+*expand-center* ++
+	typeof: bool ++
+	default: false ++
+	Enables the modules-center to consume all left over space dynamically.
+
+*expand-left* ++
+	typeof: bool ++
+	default: false ++
+	Enables the modules-left to consume all left over space dynamically.
+
+*expand-right* ++
+	typeof: bool ++
+	default: false ++
+	Enables the modules-left to consume all left over space dynamically.
 
 *layer* ++
 	typeof: string ++
@@ -66,6 +83,11 @@ Also, a minimal example configuration can be found at the bottom of this man pag
 	typeof: integer ++
 	Margins value without units.
 
+*no-center* ++
+	typeof: bool ++
+	default: false ++
+	Option to disable the center modules fully usefull together with expand-\*.
+
 *spacing* ++
 	typeof: integer ++
 	Size of gaps in between the different modules.
@@ -108,12 +130,6 @@ Also, a minimal example configuration can be found at the bottom of this man pag
 	Option to pass any pointer events to the window under the bar.
 	Intended to be used with either *top* or *overlay* layers and without exclusive zone.
 
-*gtk-layer-shell* ++
-	typeof: bool ++
-	default: true ++
-	Option to disable the use of gtk-layer-shell for popups.
-	Only functional if compiled with gtk-layer-shell support.
-
 *ipc* ++
 	typeof: bool ++
 	default: false ++
@@ -129,6 +145,11 @@ Also, a minimal example configuration can be found at the bottom of this man pag
 	Paths to additional configuration files.
 	Each file can contain a single object with any of the bar configuration options. In case of duplicate options, the first defined value takes precedence, i.e. including file -> first included file -> etc. Nested includes are permitted, but make sure to avoid circular imports.
 	For a multi-bar config, the include directive affects only current bar configuration object.
+
+*reload_style_on_change* ++
+	typeof: bool ++
+	default: *false* ++
+	Option to enable reloading the css style if a modification is detected on the style sheet file or any imported css files.
 
 # MODULE FORMAT
 
@@ -179,6 +200,19 @@ A minimal *config* file could look like this:
 	}
 }
 ```
+
+# SIGNALS
+
+Waybar accepts the following signals:
+
+*SIGUSR1*
+	Toggles the bar visibility (hides if shown, shows if hidden)
+*SIGUSR2*
+	Reloads (resets) the bar
+*SIGINT*
+	Quits the bar
+
+For example, to toggle the bar programmatically, you can invoke `killall -SIGUSR1 waybar`.
 
 # MULTI OUTPUT CONFIGURATION
 
@@ -277,6 +311,11 @@ A group may hide all but one element, showing them only on mouse hover. In order
 	default: "hidden" ++
 	Defines the CSS class to be applied to the hidden elements.
 
+*click-to-reveal*: ++
+	typeof: bool ++
+	default: false ++
+	Whether left click should reveal the content rather than mouse over. Note that grouped modules may still process their own on-click events.
+
 *transition-left-to-right*: ++
 	typeof: bool ++
 	default: true ++
@@ -311,11 +350,15 @@ A group may hide all but one element, showing them only on mouse hover. In order
 - *waybar-custom(5)*
 - *waybar-disk(5)*
 - *waybar-dwl-tags(5)*
+- *waybar-dwl-window(5)*
 - *waybar-gamemode(5)*
 - *waybar-hyprland-language(5)*
 - *waybar-hyprland-submap(5)*
 - *waybar-hyprland-window(5)*
 - *waybar-hyprland-workspaces(5)*
+- *waybar-niri-language(5)*
+- *waybar-niri-window(5)*
+- *waybar-niri-workspaces(5)*
 - *waybar-idle-inhibitor(5)*
 - *waybar-image(5)*
 - *waybar-inhibitor(5)*
@@ -347,3 +390,4 @@ A group may hide all but one element, showing them only on mouse hover. In order
 # SEE ALSO
 
 *sway-output(5)*
+*waybar-styles(5)"

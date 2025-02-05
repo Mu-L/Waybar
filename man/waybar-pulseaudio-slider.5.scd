@@ -27,11 +27,16 @@ The volume can be controlled by dragging the slider across the bar or clicking o
     default: horizontal ++
     The orientation of the slider. Can be either `horizontal` or `vertical`.
 
+*expand*: ++
+	typeof: bool ++
+	default: false ++
+	Enables this module to consume all left over space dynamically.
+
 # EXAMPLES
 
 ```
 "modules-right": [
-    "pulseaudio-slider",
+    "pulseaudio/slider",
 ],
 "pulseaudio/slider": {
     "min": 0,

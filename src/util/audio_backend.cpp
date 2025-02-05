@@ -1,13 +1,17 @@
 #include "util/audio_backend.hpp"
 
 #include <fmt/core.h>
+#include <pulse/def.h>
 #include <pulse/error.h>
+#include <pulse/introspect.h>
 #include <pulse/subscribe.h>
 #include <pulse/volume.h>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace waybar::util {
 
@@ -15,29 +19,18 @@ AudioBackend::AudioBackend(std::function<void()> on_updated_cb, private_construc
     : mainloop_(nullptr),
       mainloop_api_(nullptr),
       context_(nullptr),
-      sink_idx_(0),
       volume_(0),
       muted_(false),
-      source_idx_(0),
       source_volume_(0),
       source_muted_(false),
-      on_updated_cb_(on_updated_cb) {
+      on_updated_cb_(std::move(on_updated_cb)) {
   mainloop_ = pa_threaded_mainloop_new();
   if (mainloop_ == nullptr) {
     throw std::runtime_error("pa_mainloop_new() failed.");
   }
   pa_threaded_mainloop_lock(mainloop_);
   mainloop_api_ = pa_threaded_mainloop_get_api(mainloop_);
-  context_ = pa_context_new(mainloop_api_, "waybar");
-  if (context_ == nullptr) {
-    throw std::runtime_error("pa_context_new() failed.");
-  }
-  if (pa_context_connect(context_, nullptr, PA_CONTEXT_NOFAIL, nullptr) < 0) {
-    auto err =
-        fmt::format("pa_context_connect() failed: {}", pa_strerror(pa_context_errno(context_)));
-    throw std::runtime_error(err);
-  }
-  pa_context_set_state_callback(context_, contextStateCb, this);
+  connectContext();
   if (pa_threaded_mainloop_start(mainloop_) < 0) {
     throw std::runtime_error("pa_mainloop_run() failed.");
   }
@@ -61,8 +54,21 @@ std::shared_ptr<AudioBackend> AudioBackend::getInstance(std::function<void()> on
   return std::make_shared<AudioBackend>(on_updated_cb, tag);
 }
 
+void AudioBackend::connectContext() {
+  context_ = pa_context_new(mainloop_api_, "waybar");
+  if (context_ == nullptr) {
+    throw std::runtime_error("pa_context_new() failed.");
+  }
+  pa_context_set_state_callback(context_, contextStateCb, this);
+  if (pa_context_connect(context_, nullptr, PA_CONTEXT_NOFAIL, nullptr) < 0) {
+    auto err =
+        fmt::format("pa_context_connect() failed: {}", pa_strerror(pa_context_errno(context_)));
+    throw std::runtime_error(err);
+  }
+}
+
 void AudioBackend::contextStateCb(pa_context *c, void *data) {
-  auto backend = static_cast<AudioBackend *>(data);
+  auto *backend = static_cast<AudioBackend *>(data);
   switch (pa_context_get_state(c)) {
     case PA_CONTEXT_TERMINATED:
       backend->mainloop_api_->quit(backend->mainloop_api_, 0);
@@ -80,7 +86,13 @@ void AudioBackend::contextStateCb(pa_context *c, void *data) {
                            nullptr, nullptr);
       break;
     case PA_CONTEXT_FAILED:
-      backend->mainloop_api_->quit(backend->mainloop_api_, 1);
+      // When pulseaudio server restarts, the connection is "failed". Try to reconnect.
+      // pa_threaded_mainloop_lock is already acquired in callback threads.
+      // So there is no need to lock it again.
+      if (backend->context_ != nullptr) {
+        pa_context_disconnect(backend->context_);
+      }
+      backend->connectContext();
       break;
     case PA_CONTEXT_CONNECTING:
     case PA_CONTEXT_AUTHORIZING:
@@ -117,7 +129,7 @@ void AudioBackend::subscribeCb(pa_context *context, pa_subscription_event_type_t
  * Called in response to a volume change request
  */
 void AudioBackend::volumeModifyCb(pa_context *c, int success, void *data) {
-  auto backend = static_cast<AudioBackend *>(data);
+  auto *backend = static_cast<AudioBackend *>(data);
   if (success != 0) {
     pa_context_get_sink_info_by_index(backend->context_, backend->sink_idx_, sinkInfoCb, data);
   }
@@ -130,25 +142,39 @@ void AudioBackend::sinkInfoCb(pa_context * /*context*/, const pa_sink_info *i, i
                               void *data) {
   if (i == nullptr) return;
 
-  auto backend = static_cast<AudioBackend *>(data);
+  auto running = i->state == PA_SINK_RUNNING;
+  auto idle = i->state == PA_SINK_IDLE;
+  spdlog::trace("Sink name {} Running:[{}] Idle:[{}]", i->name, running, idle);
+
+  auto *backend = static_cast<AudioBackend *>(data);
 
   if (!backend->ignored_sinks_.empty()) {
     for (const auto &ignored_sink : backend->ignored_sinks_) {
       if (ignored_sink == i->description) {
+        if (i->name == backend->current_sink_name_) {
+          // If the current sink happens to be ignored it is never considered running
+          // so it will be replaced with another sink.
+          backend->current_sink_running_ = false;
+        }
+
         return;
       }
     }
   }
 
-  if (backend->current_sink_name_ == i->name) {
-    if (i->state != PA_SINK_RUNNING) {
-      backend->current_sink_running_ = false;
-    } else {
-      backend->current_sink_running_ = true;
-    }
+  backend->default_sink_running_ = backend->default_sink_name == i->name &&
+                                   (i->state == PA_SINK_RUNNING || i->state == PA_SINK_IDLE);
+
+  if (i->name != backend->default_sink_name && !backend->default_sink_running_) {
+    return;
   }
 
-  if (!backend->current_sink_running_ && i->state == PA_SINK_RUNNING) {
+  if (backend->current_sink_name_ == i->name) {
+    backend->current_sink_running_ = (i->state == PA_SINK_RUNNING || i->state == PA_SINK_IDLE);
+  }
+
+  if (!backend->current_sink_running_ &&
+      (i->state == PA_SINK_RUNNING || i->state == PA_SINK_IDLE)) {
     backend->current_sink_name_ = i->name;
     backend->current_sink_running_ = true;
   }
@@ -163,7 +189,7 @@ void AudioBackend::sinkInfoCb(pa_context * /*context*/, const pa_sink_info *i, i
     backend->desc_ = i->description;
     backend->monitor_ = i->monitor_source_name;
     backend->port_name_ = i->active_port != nullptr ? i->active_port->name : "Unknown";
-    if (auto ff = pa_proplist_gets(i->proplist, PA_PROP_DEVICE_FORM_FACTOR)) {
+    if (const auto *ff = pa_proplist_gets(i->proplist, PA_PROP_DEVICE_FORM_FACTOR)) {
       backend->form_factor_ = ff;
     } else {
       backend->form_factor_ = "";
@@ -177,7 +203,7 @@ void AudioBackend::sinkInfoCb(pa_context * /*context*/, const pa_sink_info *i, i
  */
 void AudioBackend::sourceInfoCb(pa_context * /*context*/, const pa_source_info *i, int /*eol*/,
                                 void *data) {
-  auto backend = static_cast<AudioBackend *>(data);
+  auto *backend = static_cast<AudioBackend *>(data);
   if (i != nullptr && backend->default_source_name_ == i->name) {
     auto source_volume = static_cast<float>(pa_cvolume_avg(&(i->volume))) / float{PA_VOLUME_NORM};
     backend->source_volume_ = std::round(source_volume * 100.0F);
@@ -194,8 +220,9 @@ void AudioBackend::sourceInfoCb(pa_context * /*context*/, const pa_source_info *
  * used to find the default PulseAudio sink.
  */
 void AudioBackend::serverInfoCb(pa_context *context, const pa_server_info *i, void *data) {
-  auto backend = static_cast<AudioBackend *>(data);
+  auto *backend = static_cast<AudioBackend *>(data);
   backend->current_sink_name_ = i->default_sink_name;
+  backend->default_sink_name = i->default_sink_name;
   backend->default_source_name_ = i->default_source_name;
 
   pa_context_get_sink_info_list(context, sinkInfoCb, data);
@@ -209,7 +236,9 @@ void AudioBackend::changeVolume(uint16_t volume, uint16_t min_volume, uint16_t m
   volume = std::clamp(volume, min_volume, max_volume);
   pa_cvolume_set(&pa_volume, pa_volume_.channels, volume * volume_tick);
 
+  pa_threaded_mainloop_lock(mainloop_);
   pa_context_set_sink_volume_by_index(context_, sink_idx_, &pa_volume, volumeModifyCb, this);
+  pa_threaded_mainloop_unlock(mainloop_);
 }
 
 void AudioBackend::changeVolume(ChangeType change_type, double step, uint16_t max_volume) {
@@ -238,27 +267,41 @@ void AudioBackend::changeVolume(ChangeType change_type, double step, uint16_t ma
       pa_cvolume_dec(&pa_volume, change);
     }
   }
+  pa_threaded_mainloop_lock(mainloop_);
   pa_context_set_sink_volume_by_index(context_, sink_idx_, &pa_volume, volumeModifyCb, this);
+  pa_threaded_mainloop_unlock(mainloop_);
 }
 
 void AudioBackend::toggleSinkMute() {
   muted_ = !muted_;
-  pa_context_set_sink_mute_by_index(context_, sink_idx_, muted_, nullptr, nullptr);
+  pa_threaded_mainloop_lock(mainloop_);
+  pa_context_set_sink_mute_by_index(context_, sink_idx_, static_cast<int>(muted_), nullptr,
+                                    nullptr);
+  pa_threaded_mainloop_unlock(mainloop_);
 }
 
 void AudioBackend::toggleSinkMute(bool mute) {
   muted_ = mute;
-  pa_context_set_sink_mute_by_index(context_, sink_idx_, muted_, nullptr, nullptr);
+  pa_threaded_mainloop_lock(mainloop_);
+  pa_context_set_sink_mute_by_index(context_, sink_idx_, static_cast<int>(muted_), nullptr,
+                                    nullptr);
+  pa_threaded_mainloop_unlock(mainloop_);
 }
 
 void AudioBackend::toggleSourceMute() {
   source_muted_ = !muted_;
-  pa_context_set_source_mute_by_index(context_, source_idx_, source_muted_, nullptr, nullptr);
+  pa_threaded_mainloop_lock(mainloop_);
+  pa_context_set_source_mute_by_index(context_, source_idx_, static_cast<int>(source_muted_),
+                                      nullptr, nullptr);
+  pa_threaded_mainloop_unlock(mainloop_);
 }
 
 void AudioBackend::toggleSourceMute(bool mute) {
   source_muted_ = mute;
-  pa_context_set_source_mute_by_index(context_, source_idx_, source_muted_, nullptr, nullptr);
+  pa_threaded_mainloop_lock(mainloop_);
+  pa_context_set_source_mute_by_index(context_, source_idx_, static_cast<int>(source_muted_),
+                                      nullptr, nullptr);
+  pa_threaded_mainloop_unlock(mainloop_);
 }
 
 bool AudioBackend::isBluetooth() {

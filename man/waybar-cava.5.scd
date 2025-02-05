@@ -64,6 +64,10 @@ libcava lives in:
 :[ bool
 :[ false
 :[ Hides the widget if no input (after sleep_timer elapsed)
+|[ *format_silent*
+:[ string
+:[
+:[ Widget's text after sleep_timer elapsed (hide_on_silence has to be false)
 |[ *method*
 :[ string
 :[ pulse
@@ -120,6 +124,18 @@ libcava lives in:
 :[ string
 :[ /dev/stdout
 :[ It's impossible to set it. Waybar sets it to = /dev/stdout for internal needs
+|[ *menu*
+:[ string
+:[
+:[ Action that popups the menu.
+|[ *menu-file*
+:[ string
+:[
+:[ Location of the menu descriptor file. There need to be an element of type GtkMenu with id *menu*
+|[ *menu-actions*
+:[ array
+:[
+:[ The actions corresponding to the buttons of the menu.
 
 Configuration can be provided as:
 - The only cava configuration file which is provided through *cava_config*. The rest configuration can be skipped
@@ -184,3 +200,8 @@ In case when cava releases new version and you're wanna get it, it should be rai
 	}
 },
 ```
+# STYLE
+
+- *#cava*
+- *#cava.silent* Applied after no sound has been detected for sleep_timer seconds
+- *#cava.updated* Applied when a new frame is shown

@@ -80,7 +80,6 @@ waybar::modules::Network::readBandwidthUsage() {
 waybar::modules::Network::Network(const std::string &id, const Json::Value &config)
     : ALabel(config, "network", id, DEFAULT_FORMAT, 60),
       ifid_(-1),
-      family_(config["family"] == "ipv6" ? AF_INET6 : AF_INET),
       efd_(-1),
       ev_fd_(-1),
       want_route_dump_(false),
@@ -141,12 +140,7 @@ waybar::modules::Network::~Network() {
     close(efd_);
   }
   if (ev_sock_ != nullptr) {
-    nl_socket_drop_membership(ev_sock_, RTNLGRP_LINK);
-    if (family_ == AF_INET) {
-      nl_socket_drop_membership(ev_sock_, RTNLGRP_IPV4_IFADDR);
-    } else {
-      nl_socket_drop_membership(ev_sock_, RTNLGRP_IPV6_IFADDR);
-    }
+    nl_socket_drop_memberships(ev_sock_, RTNLGRP_LINK, RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR);
     nl_close(ev_sock_);
     nl_socket_free(ev_sock_);
   }
@@ -161,7 +155,7 @@ void waybar::modules::Network::createEventSocket() {
   nl_socket_disable_seq_check(ev_sock_);
   nl_socket_modify_cb(ev_sock_, NL_CB_VALID, NL_CB_CUSTOM, handleEvents, this);
   nl_socket_modify_cb(ev_sock_, NL_CB_FINISH, NL_CB_CUSTOM, handleEventsDone, this);
-  auto groups = RTMGRP_LINK | (family_ == AF_INET ? RTMGRP_IPV4_IFADDR : RTMGRP_IPV6_IFADDR);
+  auto groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR;
   nl_join_groups(ev_sock_, groups);  // Deprecated
   if (nl_connect(ev_sock_, NETLINK_ROUTE) != 0) {
     throw std::runtime_error("Can't connect network socket");
@@ -169,18 +163,9 @@ void waybar::modules::Network::createEventSocket() {
   if (nl_socket_set_nonblocking(ev_sock_)) {
     throw std::runtime_error("Can't set non-blocking on network socket");
   }
-  nl_socket_add_membership(ev_sock_, RTNLGRP_LINK);
-  if (family_ == AF_INET) {
-    nl_socket_add_membership(ev_sock_, RTNLGRP_IPV4_IFADDR);
-  } else {
-    nl_socket_add_membership(ev_sock_, RTNLGRP_IPV6_IFADDR);
-  }
+  nl_socket_add_memberships(ev_sock_, RTNLGRP_LINK, RTNLGRP_IPV4_IFADDR, RTNLGRP_IPV6_IFADDR, 0);
   if (!config_["interface"].isString()) {
-    if (family_ == AF_INET) {
-      nl_socket_add_membership(ev_sock_, RTNLGRP_IPV4_ROUTE);
-    } else {
-      nl_socket_add_membership(ev_sock_, RTNLGRP_IPV6_ROUTE);
-    }
+    nl_socket_add_memberships(ev_sock_, RTNLGRP_IPV4_ROUTE, RTNLGRP_IPV6_ROUTE, 0);
   }
 
   efd_ = epoll_create1(EPOLL_CLOEXEC);
@@ -332,8 +317,8 @@ auto waybar::modules::Network::update() -> void {
   getState(signal_strength_);
 
   auto text = fmt::format(
-      fmt::runtime(format_), fmt::arg("essid", essid_), fmt::arg("signaldBm", signal_strength_dbm_),
-      fmt::arg("signalStrength", signal_strength_),
+      fmt::runtime(format_), fmt::arg("essid", essid_), fmt::arg("bssid", bssid_),
+      fmt::arg("signaldBm", signal_strength_dbm_), fmt::arg("signalStrength", signal_strength_),
       fmt::arg("signalStrengthApp", signal_strength_app_), fmt::arg("ifname", ifname_),
       fmt::arg("netmask", netmask_), fmt::arg("ipaddr", ipaddr_), fmt::arg("gwaddr", gwaddr_),
       fmt::arg("cidr", cidr_), fmt::arg("frequency", fmt::format("{:.1f}", frequency_)),
@@ -364,7 +349,7 @@ auto waybar::modules::Network::update() -> void {
     }
     if (!tooltip_format.empty()) {
       auto tooltip_text = fmt::format(
-          fmt::runtime(tooltip_format), fmt::arg("essid", essid_),
+          fmt::runtime(tooltip_format), fmt::arg("essid", essid_), fmt::arg("bssid", bssid_),
           fmt::arg("signaldBm", signal_strength_dbm_), fmt::arg("signalStrength", signal_strength_),
           fmt::arg("signalStrengthApp", signal_strength_app_), fmt::arg("ifname", ifname_),
           fmt::arg("netmask", netmask_), fmt::arg("ipaddr", ipaddr_), fmt::arg("gwaddr", gwaddr_),
@@ -407,6 +392,7 @@ void waybar::modules::Network::clearIface() {
   ifid_ = -1;
   ifname_.clear();
   essid_.clear();
+  bssid_.clear();
   ipaddr_.clear();
   gwaddr_.clear();
   netmask_.clear();
@@ -481,6 +467,7 @@ int waybar::modules::Network::handleEvents(struct nl_msg *msg, void *data) {
             } else {
               // clear state related to WiFi connection
               net->essid_.clear();
+              net->bssid_.clear();
               net->signal_strength_dbm_ = 0;
               net->signal_strength_ = 0;
               net->signal_strength_app_.clear();
@@ -526,10 +513,6 @@ int waybar::modules::Network::handleEvents(struct nl_msg *msg, void *data) {
       struct rtattr *ifa_rta = IFA_RTA(ifa);
 
       if ((int)ifa->ifa_index != net->ifid_) {
-        return NL_OK;
-      }
-
-      if (ifa->ifa_family != net->family_) {
         return NL_OK;
       }
 
@@ -589,6 +572,7 @@ int waybar::modules::Network::handleEvents(struct nl_msg *msg, void *data) {
       // to find the interface used to reach the outside world
 
       struct rtmsg *rtm = static_cast<struct rtmsg *>(NLMSG_DATA(nh));
+      int family = rtm->rtm_family;
       ssize_t attrlen = RTM_PAYLOAD(nh);
       struct rtattr *attr = RTM_RTA(rtm);
       bool has_gateway = false;
@@ -616,14 +600,14 @@ int waybar::modules::Network::handleEvents(struct nl_msg *msg, void *data) {
              * If someone ever needs to figure out the gateway address as well,
              * it's here as the attribute payload.
              */
-            inet_ntop(net->family_, RTA_DATA(attr), temp_gw_addr, sizeof(temp_gw_addr));
+            inet_ntop(family, RTA_DATA(attr), temp_gw_addr, sizeof(temp_gw_addr));
             has_gateway = true;
             break;
           case RTA_DST: {
             /* The destination address.
              * Should be either missing, or maybe all 0s.  Accept both.
              */
-            const uint32_t nr_zeroes = (net->family_ == AF_INET) ? 4 : 16;
+            const uint32_t nr_zeroes = (family == AF_INET) ? 4 : 16;
             unsigned char c = 0;
             size_t dstlen = RTA_PAYLOAD(attr);
             if (dstlen != nr_zeroes) {
@@ -715,7 +699,6 @@ void waybar::modules::Network::askForStateDump(void) {
   };
 
   if (want_route_dump_) {
-    rt_hdr.rtgen_family = family_;
     nl_send_simple(ev_sock_, RTM_GETROUTE, NLM_F_DUMP, &rt_hdr, sizeof(rt_hdr));
     want_route_dump_ = false;
     dump_in_progress_ = true;
@@ -726,7 +709,6 @@ void waybar::modules::Network::askForStateDump(void) {
     dump_in_progress_ = true;
 
   } else if (want_addr_dump_) {
-    rt_hdr.rtgen_family = family_;
     nl_send_simple(ev_sock_, RTM_GETADDR, NLM_F_DUMP, &rt_hdr, sizeof(rt_hdr));
     want_addr_dump_ = false;
     dump_in_progress_ = true;
@@ -772,6 +754,7 @@ int waybar::modules::Network::handleScan(struct nl_msg *msg, void *data) {
   net->parseEssid(bss);
   net->parseSignal(bss);
   net->parseFreq(bss);
+  net->parseBssid(bss);
   return NL_OK;
 }
 
@@ -834,6 +817,17 @@ void waybar::modules::Network::parseFreq(struct nlattr **bss) {
   if (bss[NL80211_BSS_FREQUENCY] != nullptr) {
     // in GHz
     frequency_ = (double)nla_get_u32(bss[NL80211_BSS_FREQUENCY]) / 1000;
+  }
+}
+
+void waybar::modules::Network::parseBssid(struct nlattr **bss) {
+  if (bss[NL80211_BSS_BSSID] != nullptr) {
+    auto bssid = static_cast<uint8_t *>(nla_data(bss[NL80211_BSS_BSSID]));
+    auto bssid_len = nla_len(bss[NL80211_BSS_BSSID]);
+    if (bssid_len == 6) {
+      bssid_ = fmt::format("{:x}:{:x}:{:x}:{:x}:{:x}:{:x}", bssid[0], bssid[1], bssid[2], bssid[3],
+                           bssid[4], bssid[5]);
+    }
   }
 }
 

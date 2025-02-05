@@ -40,6 +40,7 @@ class Network : public ALabel {
   void parseEssid(struct nlattr**);
   void parseSignal(struct nlattr**);
   void parseFreq(struct nlattr**);
+  void parseBssid(struct nlattr**);
   bool associatedOrJoined(struct nlattr**);
   bool checkInterface(std::string name);
   auto getInfo() -> void;
@@ -49,7 +50,6 @@ class Network : public ALabel {
   std::optional<std::pair<unsigned long long, unsigned long long>> readBandwidthUsage();
 
   int ifid_;
-  sa_family_t family_;
   struct sockaddr_nl nladdr_ = {0};
   struct nl_sock* sock_ = nullptr;
   struct nl_sock* ev_sock_ = nullptr;
@@ -69,6 +69,7 @@ class Network : public ALabel {
 
   std::string state_;
   std::string essid_;
+  std::string bssid_;
   bool carrier_;
   std::string ifname_;
   std::string ipaddr_;
