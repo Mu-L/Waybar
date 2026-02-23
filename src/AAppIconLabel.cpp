@@ -158,7 +158,8 @@ void AAppIconLabel::updateAppIcon() {
     } else if (app_icon_name_.front() == '/') {
       try {
         int scaled_icon_size = app_icon_size_ * image_.get_scale_factor();
-        auto pixbuf = Gdk::Pixbuf::create_from_file(app_icon_name_, scaled_icon_size, scaled_icon_size);
+        auto pixbuf =
+            Gdk::Pixbuf::create_from_file(app_icon_name_, scaled_icon_size, scaled_icon_size);
 
         auto surface = Gdk::Cairo::create_surface_from_pixbuf(pixbuf, image_.get_scale_factor(),
                                                               image_.get_window());

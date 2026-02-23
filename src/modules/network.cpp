@@ -45,7 +45,7 @@ waybar::modules::Network::readBandwidthUsage() {
     std::istringstream iss(line);
 
     std::string ifacename;
-    iss >> ifacename;      // ifacename contains "eth0:"
+    iss >> ifacename;  // ifacename contains "eth0:"
     if (ifacename.empty()) continue;
     ifacename.pop_back();  // remove trailing ':'
     if (ifacename != ifname_) {

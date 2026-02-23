@@ -62,7 +62,8 @@ UPower::UPower(const std::string& id, const Json::Value& config)
   GError* gErr = NULL;
   upClient_ = up_client_new_full(NULL, &gErr);
   if (upClient_ == NULL) {
-    spdlog::error("Upower. UPower client connection error. {}", gErr ? gErr->message : "unknown error");
+    spdlog::error("Upower. UPower client connection error. {}",
+                  gErr ? gErr->message : "unknown error");
     if (gErr) g_error_free(gErr);
   }
 

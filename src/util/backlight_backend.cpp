@@ -79,20 +79,38 @@ static void upsert_device(std::vector<BacklightDevice>& devices, udev_device* de
   });
   if (found != devices.end()) {
     if (actual != nullptr) {
-      try { found->set_actual(std::stoi(actual)); } catch (const std::exception&) {}
+      try {
+        found->set_actual(std::stoi(actual));
+      } catch (const std::exception&) {
+      }
     }
     if (max != nullptr) {
-      try { found->set_max(std::stoi(max)); } catch (const std::exception&) {}
+      try {
+        found->set_max(std::stoi(max));
+      } catch (const std::exception&) {
+      }
     }
     if (power != nullptr) {
-      try { found->set_powered(std::stoi(power) == 0); } catch (const std::exception&) {}
+      try {
+        found->set_powered(std::stoi(power) == 0);
+      } catch (const std::exception&) {
+      }
     }
   } else {
     int actual_int = 0, max_int = 0;
     bool power_bool = true;
-    try { if (actual != nullptr) actual_int = std::stoi(actual); } catch (const std::exception&) {}
-    try { if (max != nullptr) max_int = std::stoi(max); } catch (const std::exception&) {}
-    try { if (power != nullptr) power_bool = std::stoi(power) == 0; } catch (const std::exception&) {}
+    try {
+      if (actual != nullptr) actual_int = std::stoi(actual);
+    } catch (const std::exception&) {
+    }
+    try {
+      if (max != nullptr) max_int = std::stoi(max);
+    } catch (const std::exception&) {
+    }
+    try {
+      if (power != nullptr) power_bool = std::stoi(power) == 0;
+    } catch (const std::exception&) {
+    }
     devices.emplace_back(name, actual_int, max_int, power_bool);
   }
 }

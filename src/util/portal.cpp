@@ -63,7 +63,8 @@ void waybar::Portal::refreshAppearance() {
     Glib::VariantBase modev;
     container.get_child(modev, 0);
     auto mode =
-        Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::Variant<Glib::Variant<uint32_t>>>>(modev)
+        Glib::VariantBase::cast_dynamic<Glib::Variant<Glib::Variant<Glib::Variant<uint32_t>>>>(
+            modev)
             .get()
             .get()
             .get();

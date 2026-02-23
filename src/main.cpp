@@ -142,7 +142,7 @@ static void handleSignalMainThread(int signum, bool& reload) {
       spdlog::debug("Received SIGCHLD in signalThread");
       {
         std::lock_guard<std::mutex> lock(reap_mtx);
-        for (auto it = reap.begin(); it != reap.end(); ) {
+        for (auto it = reap.begin(); it != reap.end();) {
           if (waitpid(*it, nullptr, WNOHANG) == *it) {
             spdlog::debug("Reaped child with PID: {}", *it);
             it = reap.erase(it);

@@ -80,7 +80,8 @@ std::tuple<std::vector<uint16_t>, std::string> waybar::modules::CpuUsage::getCpu
       auto [prev_idle, prev_total] = prev_times[0];
       const float delta_idle = curr_idle - prev_idle;
       const float delta_total = curr_total - prev_total;
-      uint16_t tmp = (delta_total > 0) ? static_cast<uint16_t>(100 * (1 - delta_idle / delta_total)) : 0;
+      uint16_t tmp =
+          (delta_total > 0) ? static_cast<uint16_t>(100 * (1 - delta_idle / delta_total)) : 0;
       tooltip = fmt::format("Total: {}%\nCores: (pending)", tmp);
       usage.push_back(tmp);
     } else {
@@ -102,7 +103,8 @@ std::tuple<std::vector<uint16_t>, std::string> waybar::modules::CpuUsage::getCpu
     }
     const float delta_idle = curr_idle - prev_idle;
     const float delta_total = curr_total - prev_total;
-    uint16_t tmp = (delta_total > 0) ? static_cast<uint16_t>(100 * (1 - delta_idle / delta_total)) : 0;
+    uint16_t tmp =
+        (delta_total > 0) ? static_cast<uint16_t>(100 * (1 - delta_idle / delta_total)) : 0;
     if (i == 0) {
       tooltip = fmt::format("Total: {}%", tmp);
     } else {
