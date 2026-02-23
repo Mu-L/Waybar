@@ -323,6 +323,7 @@ void waybar::modules::MPD::checkErrors(mpd_connection* conn) {
     case MPD_ERROR_SYSTEM:
       if (auto ec = mpd_connection_get_system_error(conn); ec != 0) {
         mpd_connection_clear_error(conn);
+        connection_.reset();
         throw std::system_error(ec, std::system_category());
       }
       G_GNUC_FALLTHROUGH;
