@@ -139,7 +139,8 @@ void waybar::modules::Battery::refreshBatteries() {
             auto event_path = (node.path() / "uevent");
             auto wd = inotify_add_watch(battery_watch_fd_, event_path.c_str(), IN_ACCESS);
             if (wd < 0) {
-              spdlog::warn("Could not watch events for {} (device may have been removed)", node.path().string());
+              spdlog::warn("Could not watch events for {} (device may have been removed)",
+                           node.path().string());
               continue;
             }
             batteries_[node.path()] = wd;
