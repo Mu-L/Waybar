@@ -40,12 +40,16 @@ AudioBackend::AudioBackend(std::function<void()> on_updated_cb, private_construc
 }
 
 AudioBackend::~AudioBackend() {
-  if (context_ != nullptr) {
-    pa_context_disconnect(context_);
-  }
-
   if (mainloop_ != nullptr) {
-    mainloop_api_->quit(mainloop_api_, 0);
+    // Lock the mainloop so we can safely disconnect the context.
+    // This must be done before stopping the thread.
+    pa_threaded_mainloop_lock(mainloop_);
+    if (context_ != nullptr) {
+      pa_context_disconnect(context_);
+      pa_context_unref(context_);
+      context_ = nullptr;
+    }
+    pa_threaded_mainloop_unlock(mainloop_);
     pa_threaded_mainloop_stop(mainloop_);
     pa_threaded_mainloop_free(mainloop_);
   }
@@ -73,7 +77,14 @@ void AudioBackend::contextStateCb(pa_context* c, void* data) {
   auto* backend = static_cast<AudioBackend*>(data);
   switch (pa_context_get_state(c)) {
     case PA_CONTEXT_TERMINATED:
-      backend->mainloop_api_->quit(backend->mainloop_api_, 0);
+      // Only quit the mainloop if this is still the active context.
+      // During reconnection, the old context fires TERMINATED after the new one
+      // has already been created; quitting in that case would kill the new context.
+      // Note: context_ is only written from PA callbacks (while the mainloop lock is
+      // held), so this comparison is safe within any PA callback.
+      if (backend->context_ == nullptr || backend->context_ == c) {
+        backend->mainloop_api_->quit(backend->mainloop_api_, 0);
+      }
       break;
     case PA_CONTEXT_READY:
       pa_context_get_server_info(c, serverInfoCb, data);
@@ -93,6 +104,8 @@ void AudioBackend::contextStateCb(pa_context* c, void* data) {
       // So there is no need to lock it again.
       if (backend->context_ != nullptr) {
         pa_context_disconnect(backend->context_);
+        pa_context_unref(backend->context_);
+        backend->context_ = nullptr;
       }
       backend->connectContext();
       break;
